@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AI Snake Team Death Match</title>
+    <style>
+        body {
+            background: #1a1a1a;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+        #gameSetup {
+            margin-bottom: 20px;
+        }
+        canvas {
+            border: 2px solid #333;
+        }
+        .score {
+            margin: 10px;
+            font-size: 20px;
+        }
+        input, button {
+            padding: 5px;
+            margin: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameSetup">
+        <input type="number" id="width" placeholder="Width (min 600)" min="600" value="800">
+        <input type="number" id="height" placeholder="Height (min 800)" min="800" value="600">
+        <button onclick="startGame()">Start Game</button>
+    </div>
+    <div class="score" id="greenScore">Green Team: 0</div>
+    <div class="score" id="blueScore">Blue Team: 0</div>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const GRID_SIZE = 20;
+        const FRAME_RATE = 10;
+
+        class Snake {
+            constructor(x, y, team) {
+                this.body = [{x, y}];
+                this.team = team;
+                this.direction = {x: 1, y: 0};
+                this.dead = false;
+            }
+
+            move(target) {
+                if (this.dead) return;
+                
+                const head = {...this.body[0]};
+                const dx = target.x - head.x;
+                const dy = target.y - head.y;
+                
+                // Simple AI movement
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    this.direction = {x: Math.sign(dx), y: 0};
+                } else {
+                    this.direction = {x: 0, y: Math.sign(dy)};
+                }
+
+                head.x = (head.x + this.direction.x + game.gridWidth) % game.gridWidth;
+                head.y = (head.y + this.direction.y + game.gridHeight) % game.gridHeight;
+                
+                this.body.unshift(head);
+                if (!this.eating) {
+                    this.body.pop();
+                }
+                this.eating = false;
+            }
+        }
+
+        class Food {
+            constructor() {
+                this.relocate();
+                this.value = Math.floor(Math.random() * 5) + 1;
+            }
+
+            relocate() {
+                this.x = Math.floor(Math.random() * game.gridWidth);
+                this.y = Math.floor(Math.random() * game.gridHeight);
+            }
+        }
+
+        class Game {
+            constructor() {
+                this.canvas = document.getElementById('gameCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.greenTeam = [];
+                this.blueTeam = [];
+                this.foods = [];
+                this.scores = {green: 0, blue: 0};
+            }
+
+            init(width, height) {
+                this.canvas.width = width;
+                this.canvas.height = height;
+                this.gridWidth = Math.floor(width / GRID_SIZE);
+                this.gridHeight = Math.floor(height / GRID_SIZE);
+                
+                this.greenTeam = [new Snake(1, 1, 'green')];
+                this.blueTeam = [new Snake(this.gridWidth - 2, this.gridHeight - 2, 'blue')];
+                this.foods = [new Food()];
+                this.scores = {green: 0, blue: 0};
+            }
+
+            update() {
+                this.updateFood();
+                this.updateSnakes();
+                this.checkCollisions();
+                this.spawnNewSnakes();
+                this.checkWinConditions();
+            }
+
+            updateFood() {
+                const requiredFood = (this.greenTeam.length + this.blueTeam.length) - 1;
+                while (this.foods.length < requiredFood) {
+                    this.foods.push(new Food());
+                }
+            }
+
+            findNearestFood(snake) {
+                let nearest = this.foods[0];
+                let minDist = Infinity;
+                
+                for (const food of this.foods) {
+                    const dist = Math.abs(snake.body[0].x - food.x) + Math.abs(snake.body[0].y - food.y);
+                    if (dist < minDist) {
+                        minDist = dist;
+                        nearest = food;
+                    }
+                }
+                
+                return nearest;
+            }
+
+            updateSnakes() {
+                const allSnakes = [...this.greenTeam, ...this.blueTeam];
+                for (const snake of allSnakes) {
+                    if (snake.dead) continue;
+                    const target = this.findNearestFood(snake);
+                    snake.move(target);
+                }
+            }
+
+            checkCollisions() {
+                const allSnakes = [...this.greenTeam, ...this.blueTeam];
+                
+                // Check food collisions
+                for (const snake of allSnakes) {
+                    if (snake.dead) continue;
+                    const head = snake.body[0];
+                    
+                    for (let i = this.foods.length - 1; i >= 0; i--) {
+                        const food = this.foods[i];
+                        if (head.x === food.x && head.y === food.y) {
+                            snake.eating = true;
+                            this.scores[snake.team] += food.value;
+                            this.foods.splice(i, 1);
+                            break;
+                        }
+                    }
+                }
+
+                // Check snake collisions
+                for (const snake1 of allSnakes) {
+                    if (snake1.dead) continue;
+                    const head1 = snake1.body[0];
+
+                    for (const snake2 of allSnakes) {
+                        if (snake2.dead || snake1 === snake2) continue;
+                        
+                        for (const segment of snake2.body) {
+                            if (head1.x === segment.x && head1.y === segment.y) {
+                                snake1.dead = true;
+                                const penalty = snake1.body.length * (snake1.team === snake2.team ? 1 : 2);
+                                this.scores[snake1.team] = Math.max(0, this.scores[snake1.team] - penalty);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Remove dead snakes
+                this.greenTeam = this.greenTeam.filter(snake => !snake.dead);
+                this.blueTeam = this.blueTeam.filter(snake => !snake.dead);
+            }
+
+            spawnNewSnakes() {
+                ['green', 'blue'].forEach(team => {
+                    const snakes = team === 'green' ? this.greenTeam : this.blueTeam;
+                    const requiredScore = snakes.length * 5;
+                    
+                    if (this.scores[team] >= requiredScore) {
+                        const x = team === 'green' ? 1 : this.gridWidth - 2;
+                        const y = team === 'green' ? 1 : this.gridHeight - 2;
+                        snakes.push(new Snake(x, y, team));
+                    }
+                });
+            }
+
+            checkWinConditions() {
+                if (this.scores.green >= 200) {
+                    alert('Green team wins!');
+                    this.init(this.canvas.width, this.canvas.height);
+                } else if (this.scores.blue >= 200) {
+                    alert('Blue team wins!');
+                    this.init(this.canvas.width, this.canvas.height);
+                } else if (this.greenTeam.length === 0) {
+                    alert('Blue team wins! Green team has no snakes left.');
+                    this.init(this.canvas.width, this.canvas.height);
+                } else if (this.blueTeam.length === 0) {
+                    alert('Green team wins! Blue team has no snakes left.');
+                    this.init(this.canvas.width, this.canvas.height);
+                }
+            }
+
+            draw() {
+                this.ctx.fillStyle = '#1a1a1a';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                // Draw foods
+                this.foods.forEach(food => {
+                    this.ctx.fillStyle = `rgb(255, ${255 - food.value * 40}, 0)`;
+                    this.ctx.fillRect(food.x * GRID_SIZE, food.y * GRID_SIZE, GRID_SIZE, GRID_SIZE);
+                });
+
+                // Draw snakes
+                const drawSnake = (snake) => {
+                    this.ctx.fillStyle = snake.team;
+                    snake.body.forEach(segment => {
+                        this.ctx.fillRect(segment.x * GRID_SIZE, segment.y * GRID_SIZE, GRID_SIZE, GRID_SIZE);
+                    });
+                };
+
+                this.greenTeam.forEach(drawSnake);
+                this.blueTeam.forEach(drawSnake);
+
+                // Update score display
+                document.getElementById('greenScore').textContent = `Green Team: ${this.scores.green}`;
+                document.getElementById('blueScore').textContent = `Blue Team: ${this.scores.blue}`;
+            }
+        }
+
+        let game;
+        let gameLoop;
+
+        function startGame() {
+            const width = Math.max(600, parseInt(document.getElementById('width').value));
+            const height = Math.max(800, parseInt(document.getElementById('height').value));
+
+            if (gameLoop) {
+                clearInterval(gameLoop);
+            }
+
+            game = new Game();
+            game.init(width, height);
+
+            gameLoop = setInterval(() => {
+                game.update();
+                game.draw();
+            }, 1000 / FRAME_RATE);
+        }
+    </script>
+</body>
+</html>

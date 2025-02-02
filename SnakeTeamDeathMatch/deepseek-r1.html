@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AI vs AI Snake Deathmatch</title>
+    <style>
+        body {
+            background-color: #1a1a1a;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-family: Arial, sans-serif;
+        }
+        #gameContainer {
+            position: relative;
+        }
+        #gameCanvas {
+            border: 2px solid white;
+        }
+        .score {
+            margin: 10px;
+            font-size: 24px;
+        }
+        .controls {
+            margin: 20px;
+        }
+        input, button {
+            margin: 5px;
+            padding: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <label>Width: <input type="number" id="width" min="600" value="800"></label>
+        <label>Height: <input type="number" id="height" min="600" value="600"></label>
+        <button onclick="startGame()">Start Game</button>
+    </div>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+    </div>
+    <div class="scores">
+        <div class="score" id="greenScore">Green: 0</div>
+        <div class="score" id="blueScore">Blue: 0</div>
+    </div>
+    <script>
+        const CELL_SIZE = 20;
+        let canvas, ctx;
+        let gameWidth, gameHeight;
+        let cols, rows;
+        let snakes = [];
+        let foods = [];
+        let greenScore = 0;
+        let blueScore = 0;
+        let gameLoop;
+        let isGameOver = false;
+
+        class Snake {
+            constructor(x, y, team) {
+                this.body = [{x, y}];
+                this.team = team;
+                this.direction = {dx: 0, dy: 0};
+                this.isGrowing = false;
+                this.isAlive = true;
+            }
+
+            getHead() {
+                return this.body[0];
+            }
+        }
+
+        class Food {
+            constructor(x, y, value) {
+                this.x = x;
+                this.y = y;
+                this.value = value;
+            }
+        }
+
+        function startGame() {
+            const widthInput = document.getElementById('width');
+            const heightInput = document.getElementById('height');
+            gameWidth = parseInt(widthInput.value);
+            gameHeight = parseInt(heightInput.value);
+            
+            if (gameWidth < 600 || gameHeight < 600) {
+                alert('Minimum size is 600x600 pixels');
+                return;
+            }
+
+            canvas = document.getElementById('gameCanvas');
+            ctx = canvas.getContext('2d');
+            canvas.width = gameWidth;
+            canvas.height = gameHeight;
+            
+            cols = Math.floor(gameWidth / CELL_SIZE);
+            rows = Math.floor(gameHeight / CELL_SIZE);
+            
+            resetGame();
+            
+            if (gameLoop) {
+                cancelAnimationFrame(gameLoop);
+            }
+            gameLoop = requestAnimationFrame(update);
+        }
+
+        function resetGame() {
+            snakes = [];
+            foods = [];
+            greenScore = 0;
+            blueScore = 0;
+            isGameOver = false;
+            const greenStart = {x: Math.floor(cols/4), y: Math.floor(rows/2)};
+            const blueStart = {x: Math.floor(3*cols/4), y: Math.floor(rows/2)};
+            snakes.push(new Snake(greenStart.x, greenStart.y, 'green'));
+            snakes.push(new Snake(blueStart.x, blueStart.y, 'blue'));
+            spawnFood();
+            updateScoreDisplay();
+        }
+
+        function spawnFood() {
+            while (foods.length < snakes.length - 1) {
+                let newFood;
+                let isValid = false;
+                while (!isValid) {
+                    newFood = new Food(
+                        Math.floor(Math.random() * cols),
+                        Math.floor(Math.random() * rows),
+                        Math.floor(Math.random() * 5) + 1
+                    );
+                    isValid = true;
+                    for (const snake of snakes) {
+                        for (const segment of snake.body) {
+                            if (segment.x === newFood.x && segment.y === newFood.y) {
+                                isValid = false;
+                                break;
+                            }
+                        }
+                        if (!isValid) break;
+                    }
+                    if (isValid) {
+                        for (const food of foods) {
+                            if (food.x === newFood.x && food.y === newFood.y) {
+                                isValid = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+                foods.push(newFood);
+            }
+            while (foods.length > snakes.length - 1) {
+                foods.pop();
+            }
+        }
+
+        function updateScoreDisplay() {
+            document.getElementById('greenScore').textContent = `Green: ${greenScore}`;
+            document.getElementById('blueScore').textContent = `Blue: ${blueScore}`;
+        }
+
+        function calculateDirection(snake) {
+            let nearestFood = null;
+            let minDistance = Infinity;
+            
+            for (const food of foods) {
+                const dx = (food.x - snake.getHead().x + cols) % cols;
+                const dy = (food.y - snake.getHead().y + rows) % rows;
+                const wrappedDx = dx > cols/2 ? dx - cols : dx;
+                const wrappedDy = dy > rows/2 ? dy - rows : dy;
+                const distance = Math.abs(wrappedDx) + Math.abs(wrappedDy);
+                
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    nearestFood = food;
+                }
+            }
+            
+            if (!nearestFood) return {dx: 0, dy: 0};
+            
+            const directions = [
+                {dx: 0, dy: -1}, {dx: 0, dy: 1},
+                {dx: -1, dy: 0}, {dx: 1, dy: 0}
+            ];
+            
+            let bestDir = null;
+            let bestDistance = Infinity;
+            
+            for (const dir of directions) {
+                const nx = (snake.getHead().x + dir.dx + cols) % cols;
+                const ny = (snake.getHead().y + dir.dy + rows) % rows;
+                
+                if (isPositionSafe(nx, ny, snake)) {
+                    const dx = (nearestFood.x - nx + cols) % cols;
+                    const dy = (nearestFood.y - ny + rows) % rows;
+                    const wrappedDx = dx > cols/2 ? dx - cols : dx;
+                    const wrappedDy = dy > rows/2 ? dy - rows : dy;
+                    const distance = Math.abs(wrappedDx) + Math.abs(wrappedDy);
+                    
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        bestDir = dir;
+                    }
+                }
+            }
+            
+            if (!bestDir) {
+                const dx = nearestFood.x - snake.getHead().x;
+                const dy = nearestFood.y - snake.getHead().y;
+                const absDx = Math.abs(dx);
+                const absDy = Math.abs(dy);
+                
+                if (absDx > absDy) {
+                    bestDir = dx > 0 ? {dx: 1, dy: 0} : {dx: -1, dy: 0};
+                } else {
+                    bestDir = dy > 0 ? {dx: 0, dy: 1} : {dx: 0, dy: -1};
+                }
+            }
+            
+            return bestDir;
+        }
+
+        function isPositionSafe(nx, ny, currentSnake) {
+            for (const snake of snakes) {
+                if (!snake.isAlive) continue;
+                for (let i = 0; i < snake.body.length; i++) {
+                    if (snake === currentSnake && i === snake.body.length - 1 && !currentSnake.isGrowing) continue;
+                    const segment = snake.body[i];
+                    if (segment.x === nx && segment.y === ny) return false;
+                }
+            }
+            return true;
+        }
+
+        function update() {
+            if (isGameOver) return;
+            
+            snakes.forEach(snake => {
+                if (snake.isAlive) snake.direction = calculateDirection(snake);
+            });
+            
+            const newHeads = [];
+            const deadSnakes = [];
+            
+            snakes.forEach(snake => {
+                if (!snake.isAlive) return;
+                const head = snake.getHead();
+                const dir = snake.direction;
+                const newHead = {
+                    x: (head.x + dir.dx + cols) % cols,
+                    y: (head.y + dir.dy + rows) % rows
+                };
+                newHeads.push({ snake, newHead });
+                
+                let foodIndex = foods.findIndex(f => f.x === newHead.x && f.y === newHead.y);
+                if (foodIndex !== -1) {
+                    if (snake.team === 'green') greenScore += foods[foodIndex].value;
+                    else blueScore += foods[foodIndex].value;
+                    snake.isGrowing = true;
+                    foods.splice(foodIndex, 1);
+                } else {
+                    snake.isGrowing = false;
+                }
+            });
+            
+            newHeads.forEach(({ snake, newHead }) => {
+                let isDead = false;
+                for (const other of newHeads) {
+                    if (other.snake !== snake && other.newHead.x === newHead.x && other.newHead.y === newHead.y) {
+                        isDead = true;
+                        break;
+                    }
+                }
+                if (!isDead) {
+                    for (const otherSnake of snakes) {
+                        if (!otherSnake.isAlive || otherSnake === snake) continue;
+                        for (let i = 0; i < otherSnake.body.length; i++) {
+                            const segment = otherSnake.body[i];
+                            if (segment.x === newHead.x && segment.y === newHead.y) {
+                                if (i === otherSnake.body.length - 1 && !otherSnake.isGrowing) continue;
+                                isDead = true;
+                                break;
+                            }
+                        }
+                        if (isDead) break;
+                    }
+                }
+                if (isDead) {
+                    snake.isAlive = false;
+                    deadSnakes.push(snake);
+                }
+            });
+            
+            deadSnakes.forEach(deadSnake => {
+                const collisionX = newHeads.find(nh => nh.snake === deadSnake).newHead.x;
+                const collisionY = newHeads.find(nh => nh.snake === deadSnake).newHead.y;
+                const collidedSnakes = [];
+                
+                snakes.forEach(otherSnake => {
+                    if (!otherSnake.isAlive || otherSnake === deadSnake) return;
+                    const otherNewHead = newHeads.find(nh => nh.snake === otherSnake)?.newHead;
+                    if (otherNewHead?.x === collisionX && otherNewHead?.y === collisionY) {
+                        collidedSnakes.push(otherSnake);
+                        return;
+                    }
+                    for (let i = 0; i < otherSnake.body.length; i++) {
+                        const segment = otherSnake.body[i];
+                        if (segment.x === collisionX && segment.y === collisionY) {
+                            if (i === otherSnake.body.length - 1 && !otherSnake.isGrowing) continue;
+                            collidedSnakes.push(otherSnake);
+                            break;
+                        }
+                    }
+                });
+                
+                collidedSnakes.forEach(collidedSnake => {
+                    let penalty = deadSnake.body.length;
+                    if (collidedSnake.team !== deadSnake.team) penalty *= 2;
+                    if (collidedSnake.team === 'green') {
+                        greenScore = Math.max(0, greenScore - penalty);
+                    } else {
+                        blueScore = Math.max(0, blueScore - penalty);
+                    }
+                });
+            });
+            
+            snakes.forEach(snake => {
+                if (!snake.isAlive) return;
+                const newHead = newHeads.find(nh => nh.snake === snake).newHead;
+                snake.body.unshift(newHead);
+                if (!snake.isGrowing) snake.body.pop();
+            });
+            
+            snakes = snakes.filter(snake => snake.isAlive);
+            
+            ['green', 'blue'].forEach(team => {
+                const teamSnakes = snakes.filter(s => s.team === team).length;
+                const teamScore = team === 'green' ? greenScore : blueScore;
+                const cost = (teamSnakes + 1) * 5;
+                
+                if (teamScore >= cost) {
+                    let spawnPos;
+                    let attempts = 0;
+                    do {
+                        spawnPos = {x: Math.floor(Math.random() * cols), y: Math.floor(Math.random() * rows)};
+                        attempts++;
+                    } while (!isPositionSafe(spawnPos.x, spawnPos.y, null) && attempts < 100);
+                    
+                    if (attempts < 100) {
+                        snakes.push(new Snake(spawnPos.x, spawnPos.y, team));
+                        if (team === 'green') greenScore -= cost;
+                        else blueScore -= cost;
+                    }
+                }
+            });
+            
+            spawnFood();
+            updateScoreDisplay();
+            
+            if (greenScore >= 200) {
+                alert('Green team wins!');
+                isGameOver = true;
+            } else if (blueScore >= 200) {
+                alert('Blue team wins!');
+                isGameOver = true;
+            } else {
+                const greenAlive = snakes.some(s => s.team === 'green');
+                const blueAlive = snakes.some(s => s.team === 'blue');
+                if (!greenAlive) {
+                    alert('Blue team wins!');
+                    isGameOver = true;
+                } else if (!blueAlive) {
+                    alert('Green team wins!');
+                    isGameOver = true;
+                }
+            }
+            
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            snakes.forEach(snake => {
+                ctx.fillStyle = snake.team === 'green' ? '#00ff00' : '#0000ff';
+                snake.body.forEach(segment => {
+                    ctx.fillRect(
+                        segment.x * CELL_SIZE,
+                        segment.y * CELL_SIZE,
+                        CELL_SIZE - 1,
+                        CELL_SIZE - 1
+                    );
+                });
+            });
+            
+            foods.forEach(food => {
+                ctx.fillStyle = '#ff0000';
+                ctx.beginPath();
+                ctx.arc(
+                    (food.x + 0.5) * CELL_SIZE,
+                    (food.y + 0.5) * CELL_SIZE,
+                    CELL_SIZE/2 - 1,
+                    0,
+                    2 * Math.PI
+                );
+                ctx.fill();
+            });
+            
+            if (!isGameOver) gameLoop = requestAnimationFrame(update);
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>AI vs AI Snake Team Death Match</title>
+  <style>
+    /* Global styles – dark background, centered game area, etc. */
+    body {
+      margin: 0;
+      padding: 0;
+      background: #222;
+      color: #eee;
+      font-family: sans-serif;
+    }
+    #startScreen {
+      text-align: center;
+      margin-top: 50px;
+    }
+    #gameContainer {
+      text-align: center;
+    }
+    #gameCanvas {
+      background: #000;
+      display: block;
+      margin: 0 auto;
+    }
+    #scoreBoard {
+      margin-top: 10px;
+      font-size: 18px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Setup screen: the user sets the game field size (minimum 800×600) -->
+  <div id="startScreen">
+    <h1>AI vs AI Snake Team Death Match</h1>
+    <form id="startForm">
+      <label>Field Width (min 800 px): 
+        <input type="number" id="fieldWidth" value="800" min="800" required>
+      </label>
+      <br><br>
+      <label>Field Height (min 600 px): 
+        <input type="number" id="fieldHeight" value="600" min="600" required>
+      </label>
+      <br><br>
+      <button type="submit">Start Game</button>
+    </form>
+  </div>
+  <!-- Game container: the canvas plus score display -->
+  <div id="gameContainer" style="display:none;">
+    <canvas id="gameCanvas"></canvas>
+    <div id="scoreBoard">Green Score: 0 | Blue Score: 0</div>
+  </div>
+
+  <script>
+    /***************************************
+     * Global Variables and Utility Functions
+     ***************************************/
+    let canvas, ctx, gameInterval;
+    const cellSize = 20;  // each grid cell is 20×20 pixels
+    let gridCellsX, gridCellsY; // grid dimensions (in cells)
+    let snakes = [];    // array of snake objects
+    let foods = [];     // array of food objects
+    let scores = { green: 0, blue: 0 };
+    let snakeIdCounter = 0;
+    let gameOver = false;
+    const updateInterval = 200; // game update every 200ms (adjustable)
+
+    // Wrap coordinate x in [0, max)
+    function getWrappedCoord(x, max) {
+      if (x < 0) return max - 1;
+      if (x >= max) return 0;
+      return x;
+    }
+
+    // Return a random integer in [min, max)
+    function getRandomInt(min, max) {
+      return Math.floor(Math.random() * (max - min)) + min;
+    }
+
+    // Random food value between 1 and 5 (inclusive)
+    function randomFoodValue() {
+      return getRandomInt(1, 6);
+    }
+
+    // Convert a position object {x, y} to a string "x,y" for set membership
+    function posToString(pos) {
+      return pos.x + ',' + pos.y;
+    }
+
+    // Check if any snake occupies cell (x,y)
+    function isCellOccupied(x, y) {
+      for (let snake of snakes) {
+        for (let segment of snake.body) {
+          if (segment.x === x && segment.y === y) return true;
+        }
+      }
+      return false;
+    }
+
+    // Returns a random cell (object with x and y) that is not occupied
+    function getRandomEmptyCell() {
+      let attempts = 0;
+      while (attempts < 1000) {
+        let x = getRandomInt(0, gridCellsX);
+        let y = getRandomInt(0, gridCellsY);
+        if (!isCellOccupied(x, y)) {
+          return {x, y};
+        }
+        attempts++;
+      }
+      // Fallback if grid is “full”
+      return {x: getRandomInt(0, gridCellsX), y: getRandomInt(0, gridCellsY)};
+    }
+
+    /***************************************
+     * Game State Initialization
+     ***************************************/
+    function initGame(fieldWidth, fieldHeight) {
+      // Set up canvas and compute grid dimensions
+      canvas = document.getElementById('gameCanvas');
+      ctx = canvas.getContext('2d');
+      canvas.width = fieldWidth;
+      canvas.height = fieldHeight;
+      gridCellsX = Math.floor(fieldWidth / cellSize);
+      gridCellsY = Math.floor(fieldHeight / cellSize);
+
+      // Reset state
+      snakes = [];
+      foods = [];
+      scores = { green: 0, blue: 0 };
+      snakeIdCounter = 0;
+      gameOver = false;
+
+      // Create initial snakes (one green and one blue)
+      let greenPos = getRandomEmptyCell();
+      let bluePos = getRandomEmptyCell();
+      while (bluePos.x === greenPos.x && bluePos.y === greenPos.y) {
+        bluePos = getRandomEmptyCell();
+      }
+      snakes.push(createSnake("green", greenPos));
+      snakes.push(createSnake("blue", bluePos));
+
+      // Create initial food items:
+      // Rule: number of food items = (number of snakes) - 1.
+      let foodCount = Math.max(0, snakes.length - 1);
+      for (let i = 0; i < foodCount; i++) {
+        spawnFood();
+      }
+      updateScoreBoard();
+    }
+
+    // Create a snake object; each snake starts 1 cell long.
+    function createSnake(team, pos) {
+      const color = team === "green" ? "#00FF00" : "#00AAFF";
+      let snake = {
+        id: snakeIdCounter++,
+        team: team,
+        color: color,
+        body: [ { x: pos.x, y: pos.y } ],
+        direction: { dx: 0, dy: 0 } // will be set below
+      };
+      // Give it an initial random direction (up, down, left, or right)
+      const dirs = [ {dx:1,dy:0}, {dx:-1,dy:0}, {dx:0,dy:1}, {dx:0,dy:-1} ];
+      snake.direction = dirs[getRandomInt(0, dirs.length)];
+      return snake;
+    }
+
+    // Spawn one food item at a random empty location with a random value
+    function spawnFood() {
+      let pos = getRandomEmptyCell();
+      let food = {
+        x: pos.x,
+        y: pos.y,
+        value: randomFoodValue()
+      };
+      foods.push(food);
+    }
+
+    /***************************************
+     * Snake AI: Choose Next Move
+     *
+     * Each snake “seeks” the nearest food (using wrapped Manhattan distance)
+     * and tries to avoid immediate obstacles (cells occupied by other snakes’ bodies).
+     ***************************************/
+    function getAIMove(snake) {
+      const head = snake.body[0];
+      // Build a set of obstacle positions.
+      // For each snake of length > 1, assume its tail will be removed (so ignore the tail cell)
+      let obstacles = new Set();
+      for (let s of snakes) {
+        if (s.body.length > 1) {
+          for (let i = 0; i < s.body.length - 1; i++) {
+            obstacles.add(posToString(s.body[i]));
+          }
+        }
+      }
+      // For self, avoid “reversing” into the second segment if the snake is longer than 1.
+      let reversePos = null;
+      if (snake.body.length > 1) {
+        reversePos = snake.body[1];
+      }
+
+      // Find the nearest food using wrapped Manhattan distance.
+      let nearestFood = null;
+      let bestDist = Infinity;
+      for (let food of foods) {
+        let dx = Math.abs(food.x - head.x);
+        dx = Math.min(dx, gridCellsX - dx);
+        let dy = Math.abs(food.y - head.y);
+        dy = Math.min(dy, gridCellsY - dy);
+        let dist = dx + dy;
+        if (dist < bestDist) {
+          bestDist = dist;
+          nearestFood = food;
+        }
+      }
+      // If no food is available, choose a random direction.
+      if (!nearestFood) {
+        const dirs = [ {dx:1,dy:0}, {dx:-1,dy:0}, {dx:0,dy:1}, {dx:0,dy:-1} ];
+        return dirs[getRandomInt(0, dirs.length)];
+      }
+
+      // Compute “raw” differences (adjusted for wrapping)
+      let dxRaw = nearestFood.x - head.x;
+      if (Math.abs(dxRaw) > gridCellsX / 2)
+        dxRaw = -Math.sign(dxRaw) * (gridCellsX - Math.abs(dxRaw));
+      let dyRaw = nearestFood.y - head.y;
+      if (Math.abs(dyRaw) > gridCellsY / 2)
+        dyRaw = -Math.sign(dyRaw) * (gridCellsY - Math.abs(dyRaw));
+
+      let candidates = [];
+      // Prioritize the direction (horizontal or vertical) with the larger gap.
+      if (Math.abs(dxRaw) >= Math.abs(dyRaw)) {
+        if (dxRaw !== 0)
+          candidates.push({dx: Math.sign(dxRaw), dy: 0});
+        if (dyRaw !== 0)
+          candidates.push({dx: 0, dy: Math.sign(dyRaw)});
+      } else {
+        if (dyRaw !== 0)
+          candidates.push({dx: 0, dy: Math.sign(dyRaw)});
+        if (dxRaw !== 0)
+          candidates.push({dx: Math.sign(dxRaw), dy: 0});
+      }
+      // Add the two remaining directions as backups.
+      const allDirs = [ {dx:1,dy:0}, {dx:-1,dy:0}, {dx:0,dy:1}, {dx:0,dy:-1} ];
+      for (let d of allDirs) {
+        if (!candidates.some(c => c.dx === d.dx && c.dy === d.dy)) {
+          candidates.push(d);
+        }
+      }
+
+      // Choose the first candidate that does not go into an obstacle or reverse into itself.
+      for (let move of candidates) {
+        let newX = getWrappedCoord(head.x + move.dx, gridCellsX);
+        let newY = getWrappedCoord(head.y + move.dy, gridCellsY);
+        if (reversePos && newX === reversePos.x && newY === reversePos.y) {
+          continue; // do not reverse into itself
+        }
+        if (!obstacles.has(newX + "," + newY)) {
+          return move;
+        }
+      }
+      // If every move is “blocked,” return the top candidate.
+      return candidates[0];
+    }
+
+    /***************************************
+     * Game Update: Each Tick
+     *
+     * – Each snake picks its move, then its head advances.
+     * – If its new head lands on a food, the snake “grows” and its team’s score increases.
+     * – Afterwards, we check collisions: if a snake’s head lands on any segment
+     *   of another snake’s body, that snake is “collided” and dies.
+     * – Score penalties are applied (×1 if colliding with a teammate, ×2 if with an opponent).
+     * – Finally, if a team has enough points (≥ number of its snakes × 5) a new snake is spawned.
+     * – The food count is kept at (# snakes – 1).
+     ***************************************/
+    function updateGame() {
+      if (gameOver) return;
+
+      // 1. For each snake, decide on its move (simulate simultaneous moves).
+      let moves = {};
+      for (let snake of snakes) {
+        let move = getAIMove(snake);
+        moves[snake.id] = move;
+      }
+
+      // 2. Update each snake’s position. (Food is eaten when a snake’s new head lands on it.)
+      for (let snake of snakes) {
+        let move = moves[snake.id];
+        snake.direction = move;
+        let head = snake.body[0];
+        let newX = getWrappedCoord(head.x + move.dx, gridCellsX);
+        let newY = getWrappedCoord(head.y + move.dy, gridCellsY);
+        let newHead = { x: newX, y: newY };
+
+        // Check for food at new head position.
+        let foodEatenIndex = foods.findIndex(f => f.x === newX && f.y === newY);
+        if (foodEatenIndex !== -1) {
+          // Grow the snake: add the new head and keep the tail.
+          snake.body.unshift(newHead);
+          let foodItem = foods[foodEatenIndex];
+          scores[snake.team] += foodItem.value;
+          foods.splice(foodEatenIndex, 1);
+        } else {
+          // Normal move: add new head and remove tail.
+          snake.body.unshift(newHead);
+          snake.body.pop();
+        }
+      }
+
+      // 3. Collision Detection:
+      // For every pair of snakes, if one snake’s head lands on any cell of another snake’s body,
+      // then the “victim” snake dies. (Head-to-head collisions will kill both.)
+      // We also record if any collision comes from an opponent (multiplier = 2) or only teammates (×1).
+      let collisions = {}; // key: snake id; value: multiplier (1 or 2)
+      for (let snakeA of snakes) {
+        for (let snakeB of snakes) {
+          if (snakeA.id === snakeB.id) continue;
+          // Check if snakeA’s head collides with any segment of snakeB.
+          for (let segment of snakeB.body) {
+            if (snakeA.body[0].x === segment.x && snakeA.body[0].y === segment.y) {
+              let mult = (snakeA.team === snakeB.team) ? 1 : 2;
+              if (!collisions[snakeB.id] || collisions[snakeB.id] < mult) {
+                collisions[snakeB.id] = mult;
+              }
+            }
+          }
+        }
+      }
+
+      // Remove snakes that were collided – apply score penalties.
+      if (Object.keys(collisions).length > 0) {
+        snakes = snakes.filter(snake => {
+          if (collisions[snake.id]) {
+            let penalty = snake.body.length * collisions[snake.id];
+            scores[snake.team] = Math.max(0, scores[snake.team] - penalty);
+            return false;
+          }
+          return true;
+        });
+      }
+
+      // 4. Spawn a new snake for any team that has enough score.
+      // Rule: team’s score must be ≥ (# snakes on that team × 5).
+      ["green", "blue"].forEach(team => {
+        let teamSnakes = snakes.filter(s => s.team === team);
+        if (scores[team] >= teamSnakes.length * 5) {
+          let pos = getRandomEmptyCell();
+          snakes.push(createSnake(team, pos));
+        }
+      });
+
+      // 5. Adjust food count: Always (# snakes – 1) food items.
+      let desiredFoodCount = Math.max(0, snakes.length - 1);
+      while (foods.length < desiredFoodCount) { spawnFood(); }
+      while (foods.length > desiredFoodCount) { foods.pop(); }
+
+      updateScoreBoard();
+      checkWinConditions();
+    }
+
+    // Check for win conditions:
+    // • First team to reach a score of 200 wins.
+    // • A team loses if it has no snakes left.
+    function checkWinConditions() {
+      if (scores.green >= 200) {
+        endGame("Green");
+      } else if (scores.blue >= 200) {
+        endGame("Blue");
+      } else {
+        let greenCount = snakes.filter(s => s.team === "green").length;
+        let blueCount = snakes.filter(s => s.team === "blue").length;
+        if (greenCount === 0) endGame("Blue");
+        if (blueCount === 0) endGame("Green");
+      }
+    }
+
+    function endGame(winner) {
+      gameOver = true;
+      clearInterval(gameInterval);
+      document.getElementById('scoreBoard').innerText = winner + " team wins!";
+    }
+
+    // Update the score display.
+    function updateScoreBoard() {
+      document.getElementById('scoreBoard').innerText =
+        "Green Score: " + scores.green + " | Blue Score: " + scores.blue;
+    }
+
+    /***************************************
+     * Drawing: Render the current game state
+     ***************************************/
+    function drawGame() {
+      // Clear the canvas.
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Draw each food item as a yellow circle with its value.
+      for (let food of foods) {
+        ctx.fillStyle = "#FFFF00";
+        let px = food.x * cellSize;
+        let py = food.y * cellSize;
+        ctx.beginPath();
+        ctx.arc(px + cellSize/2, py + cellSize/2, cellSize/2 - 2, 0, 2*Math.PI);
+        ctx.fill();
+        ctx.fillStyle = "#000";
+        ctx.font = (cellSize - 4) + "px Arial";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(food.value, px + cellSize/2, py + cellSize/2);
+      }
+
+      // Draw each snake. The head is outlined in white.
+      for (let snake of snakes) {
+        ctx.fillStyle = snake.color;
+        snake.body.forEach((segment, i) => {
+          let px = segment.x * cellSize;
+          let py = segment.y * cellSize;
+          ctx.fillRect(px, py, cellSize, cellSize);
+          if (i === 0) {
+            ctx.strokeStyle = "#FFF";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(px, py, cellSize, cellSize);
+          }
+        });
+      }
+    }
+
+    /***************************************
+     * Main Game Loop: Update state then render.
+     ***************************************/
+    function gameLoop() {
+      updateGame();
+      drawGame();
+      // The setInterval timer (see below) keeps the loop running at fixed intervals.
+    }
+
+    /***************************************
+     * Start Game When Form Is Submitted
+     ***************************************/
+    document.getElementById('startForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      let fieldWidth = parseInt(document.getElementById('fieldWidth').value);
+      let fieldHeight = parseInt(document.getElementById('fieldHeight').value);
+      if (fieldWidth < 800) fieldWidth = 800;
+      if (fieldHeight < 600) fieldHeight = 600;
+      document.getElementById('startScreen').style.display = "none";
+      document.getElementById('gameContainer').style.display = "block";
+      initGame(fieldWidth, fieldHeight);
+      gameInterval = setInterval(gameLoop, updateInterval);
+    });
+  </script>
+</body>
+</html>
