@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AI vs AI Snake Team Death Match</title>
+    <style>
+        body {
+            background-color: #111;
+            color: white;
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin: 0;
+            padding: 0;
+        }
+        canvas {
+            border: 2px solid #555;
+            margin-top: 10px;
+        }
+        #settings {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h2>AI vs AI Snake Team Death Match</h2>
+    <div id="settings">
+        Width: <input type="number" id="width" value="800" min="800">
+        Height: <input type="number" id="height" value="600" min="600">
+        <button onclick="startGame()">Start Game</button>
+    </div>
+    <div id="scoreBoard"></div>
+    <canvas id="game"></canvas>
+    
+<script>
+let canvas, ctx, width, height;
+const gridSize = 20;
+let cols, rows, gameInterval;
+let snakes = [];
+let foods = [];
+let teamScores = {blue: 0, green: 0};
+let teams = ['blue', 'green'];
+
+class Snake {
+    constructor(team) {
+        this.team = team;
+        this.headColor = team==='blue'?'#00f':'#0f0';
+        this.bodyColor = team==='blue'?'#88f':'#8f8';
+        this.position = { x: Math.floor(Math.random() * cols), y: Math.floor(Math.random() * rows) };
+        this.body = [{...this.position}];
+        this.length = 1;
+        this.alive = true;
+    }
+    
+    moveTowards(target) {
+        let dx = target.x - this.position.x;
+        let dy = target.y - this.position.y;
+        
+        if (dx > cols/2) dx -= cols;
+        if (dx < -cols/2) dx += cols;
+        if (dy > rows/2) dy -= rows;
+        if (dy < -rows/2) dy += rows;
+
+        if (Math.abs(dx) >= Math.abs(dy)) {
+            this.position.x += dx>0?1:-1;
+        } else {
+            this.position.y += dy>0?1:-1;
+        }
+
+        if(this.position.x < 0) this.position.x = cols-1;
+        if(this.position.x >= cols) this.position.x = 0;
+        if(this.position.y < 0) this.position.y = rows-1;
+        if(this.position.y >= rows) this.position.y = 0;
+
+        this.body.unshift({...this.position});
+        if(this.body.length > this.length) this.body.pop();
+    }
+
+    checkCollisions() {
+        for(let snake of snakes){
+            for(let part of snake.body){
+                if(snake!==this && part.x === this.position.x && part.y === this.position.y){
+                    handleCollision(this, snake);
+                    return;
+                }
+            }
+        }
+    }
+
+    draw() {
+        ctx.fillStyle = this.headColor;
+        ctx.fillRect(this.position.x*gridSize, this.position.y*gridSize, gridSize, gridSize);
+        ctx.fillStyle = this.bodyColor;
+        this.body.slice(1).forEach(p=>{
+            ctx.fillRect(p.x*gridSize, p.y*gridSize, gridSize, gridSize);
+        });
+    }
+}
+
+function spawnFood(){
+    while(foods.length < snakes.length-1){
+        foods.push({
+            x: Math.floor(Math.random()*cols),
+            y: Math.floor(Math.random()*rows),
+            value: Math.ceil(Math.random()*5)
+        })
+    }
+}
+
+function drawFoods(){
+    ctx.fillStyle = '#f00';
+    foods.forEach(f=>{
+        ctx.fillRect(f.x*gridSize, f.y*gridSize, gridSize, gridSize);
+        ctx.fillStyle = '#fff';
+        ctx.font='12px Arial';
+        ctx.fillText(f.value, f.x*gridSize+gridSize/4, f.y*gridSize+3*gridSize/4);
+        ctx.fillStyle = '#f00';
+    });
+}
+
+function nearestFood(snake){
+    let minDist=Infinity, food=null;
+    foods.forEach(f=>{
+        let dx=Math.abs(snake.position.x-f.x),dy=Math.abs(snake.position.y-f.y);
+        dx=Math.min(dx,cols-dx);dy=Math.min(dy,rows-dy);
+        let d=dx+dy;if(d<minDist){minDist=d;food=f;}
+    });
+    return food;
+}
+
+function handleCollision(victim, collider){
+    victim.alive=false;
+    let penalty = victim.length*(victim.team===collider.team?1:2);
+    teamScores[victim.team]-=penalty;
+    if(teamScores[victim.team]<0) teamScores[victim.team]=0;
+    snakes=snakes.filter(s=>s.alive);
+}
+
+function updateScoreAndSpawn(){
+    teams.forEach(team=>{
+        let teamSnakes=snakes.filter(s=>s.team===team).length;
+        if(teamScores[team]>=5*teamSnakes){
+            snakes.push(new Snake(team));
+        }
+    });
+    if(teamScores.blue>=200){endGame('Blue Wins!');}
+    else if(teamScores.green>=200){endGame('Green Wins!');}
+    else if(!snakes.some(s=>s.team==='blue')){endGame('Green Wins! (Blue eliminated)');}
+    else if(!snakes.some(s=>s.team==='green')){endGame('Blue Wins! (Green eliminated)');}
+}
+
+function update(){
+    ctx.clearRect(0,0,width,height);
+    snakes.forEach(s=>{
+        let food=nearestFood(s);
+        s.moveTowards(food);
+        s.checkCollisions();
+        for(let i=foods.length-1;i>=0;i--){
+            let f=foods[i];
+            if(s.position.x===f.x&&s.position.y===f.y){
+                s.length+=f.value;
+                teamScores[s.team]+=f.value;
+                foods.splice(i,1);
+            }
+        }
+    });
+    updateScoreAndSpawn();
+    spawnFood();
+    drawFoods();
+    snakes.forEach(s=>s.draw());
+    updateScoreBoard();
+}
+
+function updateScoreBoard(){
+    document.getElementById('scoreBoard').innerHTML=`Blue: ${teamScores.blue} | Green: ${teamScores.green}`;
+}
+
+function endGame(msg){
+    clearInterval(gameInterval);
+    alert(msg);
+}
+
+function startGame(){
+    width=parseInt(document.getElementById('width').value);
+    height=parseInt(document.getElementById('height').value);
+    cols=Math.floor(width/gridSize);
+    rows=Math.floor(height/gridSize);
+    canvas=document.getElementById('game');
+    canvas.width=cols*gridSize;
+    canvas.height=rows*gridSize;
+    ctx=canvas.getContext('2d');
+
+    snakes=[new Snake('blue'), new Snake('green')];
+    teamScores={blue:0,green:0};
+    foods=[]; spawnFood();
+    clearInterval(gameInterval);
+    gameInterval=setInterval(update,150);
+}
+
+</script>
+</body>
+</html>

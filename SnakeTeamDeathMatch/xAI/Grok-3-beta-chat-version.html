@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AI vs AI Snake Team Death Match</title>
+    <style>
+        body {
+            background: #1a1a1a;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+        #game-container {
+            position: relative;
+            background: #2a2a2a;
+        }
+        canvas {
+            border: 1px solid #444;
+        }
+        #controls {
+            margin: 20px;
+        }
+        #score-board {
+            display: flex;
+            justify-content: space-between;
+            width: 400px;
+            margin: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <label>Width (min 600): <input type="number" id="width" value="800" min="600"></label>
+        <label>Height (min 800): <input type="number" id="height" value="800" min="800"></label>
+        <button onclick="startGame()">Start Game</button>
+    </div>
+    <div id="score-board">
+        <span id="green-score">Green: 0</span>
+        <span id="blue-score">Blue: 0</span>
+    </div>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <script>
+        const GRID_SIZE = 20;
+        let canvas, ctx, width, height;
+        let snakes = [];
+        let food = [];
+        let greenScore = 0;
+        let blueScore = 0;
+
+        class Snake {
+            constructor(x, y, team) {
+                this.body = [{x, y}];
+                this.team = team;
+                this.color = team === 'green' ? '#00ff00' : '#0000ff';
+            }
+
+            move() {
+                const head = {x: this.body[0].x, y: this.body[0].y};
+                const targetFood = this.findNearestFood();
+                
+                if (targetFood) {
+                    if (targetFood.x > head.x) head.x++;
+                    else if (targetFood.x < head.x) head.x--;
+                    if (targetFood.y > head.y) head.y++;
+                    else if (targetFood.y < head.y) head.y--;
+                }
+
+                // Loop boundaries
+                head.x = (head.x + Math.floor(width/GRID_SIZE)) % Math.floor(width/GRID_SIZE);
+                head.y = (head.y + Math.floor(height/GRID_SIZE)) % Math.floor(height/GRID_SIZE);
+
+                this.body.unshift(head);
+                this.body.pop();
+            }
+
+            findNearestFood() {
+                if (!food.length) return null;
+                return food.reduce((closest, item) => {
+                    const dist = Math.hypot(item.x - this.body[0].x, item.y - this.body[0].y);
+                    return dist < Math.hypot(closest.x - this.body[0].x, closest.y - this.body[0].y) ? item : closest;
+                });
+            }
+
+            checkCollision() {
+                const head = this.body[0];
+                for (let snake of snakes) {
+                    for (let i = (snake === this ? 1 : 0); i < snake.body.length; i++) {
+                        if (head.x === snake.body[i].x && head.y === snake

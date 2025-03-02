@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI vs AI Snake Team Death Match</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #222;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+        #game-container {
+            position: relative;
+        }
+        #canvas {
+            background-color: #333;
+        }
+        #scores {
+            margin-top: 10px;
+            font-size: 20px;
+        }
+        #controls {
+            margin-bottom: 20px;
+        }
+        #start-button {
+            padding: 10px 20px;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <h1>AI vs AI Snake Team Death Match</h1>
+    <div id="controls">
+        <label for="width">Width (min 800, multiple of 20):</label>
+        <input type="number" id="width" min="800" step="20" value="800">
+        <label for="height">Height (min 600, multiple of 20):</label>
+        <input type="number" id="height" min="600" step="20" value="600">
+        <button id="start-button">Start Game</button>
+    </div>
+    <div id="game-container">
+        <canvas id="canvas"></canvas>
+        <div id="scores"></div>
+    </div>
+    <script>
+        const widthInput = document.getElementById('width');
+        const heightInput = document.getElementById('height');
+        const startButton = document.getElementById('start-button');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const scoresDiv = document.getElementById('scores');
+
+        startButton.addEventListener('click', startGame);
+
+        function startGame() {
+            const width = parseInt(widthInput.value);
+            const height = parseInt(heightInput.value);
+            if (width < 800 || height < 600 || width % 20 !== 0 || height % 20 !== 0) {
+                alert('Please enter multiples of 20 for width and height, with minimum 800x600.');
+                return;
+            }
+            canvas.width = width;
+            canvas.height = height;
+
+            // Game constants
+            const cellSize = 20;
+            const numCols = width / cellSize;
+            const numRows = height / cellSize;
+
+            // Game state
+            let greenScore = 0;
+            let blueScore = 0;
+            let snakes = [];
+            let food = [];
+
+            /** Returns a random empty grid position */
+            function getRandomEmptyPosition() {
+                const occupied = new Set();
+                for (const snake of snakes) {
+                    for (const pos of snake.positions) {
+                        occupied.add(`${pos[0]},${pos[1]}`);
+                    }
+                }
+                for (const f of food) {
+                    occupied.add(`${f.position[0]},${f.position[1]}`);
+                }
+                while (true) {
+                    const row = Math.floor(Math.random() * numRows);
+                    const col = Math.floor(Math.random() * numCols);
+                    const key = `${row},${col}`;
+                    if (!occupied.has(key)) return [row, col];
+                }
+            }
+
+            // Initialize game with one snake per team
+            snakes.push({ team: 'green', positions: [getRandomEmptyPosition()], growth: 0 });
+            snakes.push({ team: 'blue', positions: [getRandomEmptyPosition()], growth: 0 });
+
+            // Spawn initial food (2 snakes - 1 = 1 food)
+            food.push({
+                position: getRandomEmptyPosition(),
+                value: Math.floor(Math.random() * 5) + 1
+            });
+
+            drawGame();
+            const interval = setInterval(gameTick, 500);
+
+            function gameTick() {
+                // Step 1: Move all snakes toward nearest food
+                for (const snake of snakes) {
+                    const otherSnakes = snakes.filter(s => s !== snake);
+                    const forbidden = new Set();
+                    for (const other of otherSnakes) {
+                        for (const pos of other.positions) {
+                            forbidden.add(`${pos[0]},${pos[1]}`);
+                        }
+                    }
+                    const foodPositions = food.map(f => f.position);
+                    const path = bfs(snake.positions[0], foodPositions, forbidden);
+                    if (path.length > 1) {
+                        const nextPos = path[1];
+                        snake.positions.unshift(nextPos);
+                        if (snake.growth > 0) {
+                            snake.growth--;
+                        } else {
+                            snake.positions.pop();
+                        }
+                    }
+                }
+
+                // Step 2: Handle food consumption
+                for (const snake of snakes) {
+                    const head = snake.positions[0];
+                    const foodIndex = food.findIndex(f => 
+                        f.position[0] === head[0] && f.position[1] === head[1]
+                    );
+                    if (foodIndex !== -1) {
+                        const f = food[foodIndex];
+                        snake.growth += f.value;
+                        if (snake.team === 'green') greenScore += f.value;
+                        else blueScore += f.value;
+                        food.splice(foodIndex, 1);
+                    }
+                }
+
+                // Step 3: Detect collisions
+                const occupancy = new Map();
+                for (const snake of snakes) {
+                    for (const pos of snake.positions) {
+                        const key = `${pos[0]},${pos[1]}`;
+                        if (!occupancy.has(key)) occupancy.set(key, []);
+                        occupancy.get(key).push(snake);
+                    }
+                }
+                const deadSnakes = [];
+                for (const snake of snakes) {
+                    const head = snake.positions[0];
+                    const key = `${head[0]},${head[1]}`;
+                    const occupants = occupancy.get(key) || [];
+                    const others = occupants.filter(s => s !== snake);
+                    if (others.length > 0) deadSnakes.push(snake);
+                }
+
+                // Step 4: Process dead snakes and update scores
+                for (const dead of deadSnakes) {
+                    const head = dead.positions[0];
+                    const key = `${head[0]},${head[1]}`;
+                    const occupants = occupancy.get(key);
+                    const hasOpponent = occupants.some(s => s.team !== dead.team);
+                    const loss = hasOpponent ? dead.positions.length * 2 : dead.positions.length;
+                    if (dead.team === 'green') greenScore = Math.max(0, greenScore - loss);
+                    else blueScore = Math.max(0, blueScore - loss);
+                    snakes = snakes.filter(s => s !== dead);
+                }
+
+                // Step 5: Check for team elimination
+                const greenCount = snakes.filter(s => s.team === 'green').length;
+                const blueCount = snakes.filter(s => s.team === 'blue').length;
+                if (greenCount === 0) {
+                    alert('Blue team wins!');
+                    clearInterval(interval);
+                    return;
+                } else if (blueCount === 0) {
+                    alert('Green team wins!');
+                    clearInterval(interval);
+                    return;
+                }
+
+                // Step 6: Spawn new snakes
+                if (greenScore >= greenCount * 5) {
+                    snakes.push({ team: 'green', positions: [getRandomEmptyPosition()], growth: 0 });
+                }
+                if (blueScore >= blueCount * 5) {
+                    snakes.push({ team: 'blue', positions: [getRandomEmptyPosition()], growth: 0 });
+                }
+
+                // Step 7: Adjust food count
+                const totalSnakes = snakes.length;
+                while (food.length < totalSnakes - 1) {
+                    food.push({
+                        position: getRandomEmptyPosition(),
+                        value: Math.floor(Math.random() * 5) + 1
+                    });
+                }
+                while (food.length > totalSnakes - 1) food.pop();
+
+                // Step 8: Render the game
+                drawGame();
+
+                // Step 9: Check for score-based victory
+                if (greenScore >= 200) {
+                    alert('Green team wins!');
+                    clearInterval(interval);
+                } else if (blueScore >= 200) {
+                    alert('Blue team wins!');
+                    clearInterval(interval);
+                }
+            }
+
+            /** BFS to find shortest path to nearest food, avoiding obstacles */
+            function bfs(start, foods, forbidden) {
+                const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+                const queue = [{ pos: start, path: [start] }];
+                const visited = new Set([`${start[0]},${start[1]}`]);
+                while (queue.length > 0) {
+                    const { pos, path } = queue.shift();
+                    if (foods.some(f => f[0] === pos[0] && f[1] === pos[1])) return path;
+                    for (const [dr, dc] of directions) {
+                        const nr = (pos[0] + dr + numRows) % numRows;
+                        const nc = (pos[1] + dc + numCols) % numCols;
+                        const key = `${nr},${nc}`;
+                        if (!forbidden.has(key) && !visited.has(key)) {
+                            visited.add(key);
+                            queue.push({ pos: [nr, nc], path: [...path, [nr, nc]] });
+                        }
+                    }
+                }
+                return []; // No path found
+            }
+
+            /** Draw the game state on the canvas */
+            function drawGame() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                for (const snake of snakes) {
+                    const color = snake.team === 'green' ? 'green' : 'blue';
+                    for (const [i, pos] of snake.positions.entries()) {
+                        ctx.fillStyle = i === 0 ? `dark${color}` : color;
+                        ctx.fillRect(pos[1] * cellSize, pos[0] * cellSize, cellSize, cellSize);
+                    }
+                }
+                for (const f of food) {
+                    ctx.fillStyle = 'yellow';
+                    ctx.fillRect(f.position[1] * cellSize, f.position[0] * cellSize, cellSize, cellSize);
+                    ctx.fillStyle = 'black';
+                    ctx.font = '12px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(f.value, f.position[1] * cellSize + cellSize / 2, f.position[0] * cellSize + cellSize / 2);
+                }
+                scoresDiv.innerHTML = `Green: ${greenScore} | Blue: ${blueScore}`;
+            }
+        }
+    </script>
+</body>
+</html>
